@@ -407,27 +407,52 @@ function buildAgentRoot(
 
 /** Top-level children of the view: the SSMS server-management folders. */
 export function buildRootNodes(): SsmsNode[] {
-  const management = new FolderNode("Management", "tools", () => [
-    new CommandLeafNode(
-      "Backup / Restore History",
-      "history",
-      "ssms.openBackupHistory",
-      // Azure SQL DB manages backups itself; no msdb.backupset there.
-      (ctx) => !isAzureSqlDb(ctx)
-    ),
-    new ErrorLogsNode("SQL Server Logs", 1, (ctx) => !isAzureSqlDb(ctx)),
-    new FolderNode(
-      "Database Mail",
-      "mail",
-      () => [
-        new GridLeafNode("Sent Items", "mail", "Database Mail — Items", Q.DATABASE_MAIL_ITEMS),
-        new GridLeafNode("Profiles", "account", "Database Mail — Profiles", Q.DATABASE_MAIL_PROFILES),
-      ],
-      // Database Mail lives in msdb — boxed product / MI only.
-      (ctx) => !isAzureSqlDb(ctx)
-    ),
-    buildResourceGovernorNode(),
-  ]);
+  const management = new FolderNode(
+    "Management",
+    "tools",
+    () => [
+      new CommandLeafNode(
+        "Backup / Restore History",
+        "history",
+        "ssms.openBackupHistory",
+        (ctx) => !isAzureSqlDb(ctx)
+      ),
+      new ErrorLogsNode("SQL Server Logs", 1, (ctx) => !isAzureSqlDb(ctx)),
+      new FolderNode(
+        "Database Mail",
+        "mail",
+        () => [
+          new GridLeafNode("Sent Items", "mail", "Database Mail — Items", Q.DATABASE_MAIL_ITEMS),
+          new GridLeafNode("Profiles", "account", "Database Mail — Profiles", Q.DATABASE_MAIL_PROFILES),
+        ],
+        (ctx) => !isAzureSqlDb(ctx)
+      ),
+      buildResourceGovernorNode(),
+    ],
+    // The whole Management folder is boxed-product / Managed Instance only.
+    (ctx) => !isAzureSqlDb(ctx)
+  );
 
-  return [management, buildSqlAgentNode()];
+  // Azure SQL Database has no Management/Agent; surface what it does expose.
+  const azure = new FolderNode(
+    "Azure SQL Database",
+    "azure",
+    () => [
+      new CommandLeafNode("Event Log", "output", "ssms.openAzureEventLog"),
+      // Per-database resource usage: list databases lazily; connect to a
+      // database only when its node is clicked.
+      new AsyncFolderNode("Resource Usage", "pulse", async (ctx, api) => {
+        const dbs = await api.listDatabases(ctx.connectionUri);
+        return dbs
+          .filter((db) => db.toLowerCase() !== "master")
+          .map(
+            (db) =>
+              new CommandLeafNode(db, "database", "ssms.openDbResourceUsage", undefined, [db])
+          );
+      }),
+    ],
+    isAzureSqlDb
+  );
+
+  return [management, azure, buildSqlAgentNode()];
 }

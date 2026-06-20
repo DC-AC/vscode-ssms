@@ -14,6 +14,8 @@ import { deleteJobStatement } from "./scripting/agentJob";
 import { openEntityForm, FormValues } from "./webviews/entityForm";
 import { EntityConfig, PROXY, ALERT } from "./scripting/agentEntities";
 import { openOperatorProperties } from "./webviews/operatorProperties";
+import { openAzureEventLog } from "./webviews/azureEventLog";
+import { openResourceUsage } from "./webviews/resourceUsage";
 import { deleteOperatorStatement } from "./scripting/operator";
 
 /**
@@ -203,6 +205,81 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ssms.viewJobHistory", (node?: SsmsNode) =>
       withTreeConnection(provider, async (run) => openJobHistory(run, node?.jobId))
     ),
+    // Azure SQL DB event log lives in master; open a connection to master.
+    vscode.commands.registerCommand("ssms.openAzureEventLog", async () => {
+      try {
+        const api = await MssqlApi.acquire();
+        const connectionId = await provider.currentConnectionId();
+        // Prefer a dedicated connection to master (works for saved connections);
+        // adhoc/untitled connections have no stored id, so fall back to the
+        // current connection and note that it must be master to return data.
+        let uri: string | undefined;
+        if (connectionId) {
+          try {
+            uri = await api.connect(connectionId, "master");
+          } catch {
+            uri = undefined;
+          }
+        }
+        uri ??= await provider.currentConnectionUri();
+        if (!uri) {
+          vscode.window.showWarningMessage("No active SQL connection.");
+          return;
+        }
+        const boundUri = uri;
+        const run = (sql: string): Promise<SimpleExecuteResult> =>
+          Promise.resolve(
+            vscode.window.withProgress(
+              { location: vscode.ProgressLocation.Window, title: "SSMS Tools: running query…" },
+              () => api.execute(boundUri, sql)
+            )
+          );
+        openAzureEventLog(run);
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }),
+    // Per-database resource usage: connect to the clicked database, then query.
+    vscode.commands.registerCommand("ssms.openDbResourceUsage", async (dbName?: string) => {
+      if (!dbName) {
+        return;
+      }
+      try {
+        const api = await MssqlApi.acquire();
+        const connectionId = await provider.currentConnectionId();
+        // sys.resource_stats lives in master and covers all databases. Prefer a
+        // dedicated master connection (saved connections); otherwise fall back
+        // to the current connection, which works if it is already on master.
+        let uri: string | undefined;
+        if (connectionId) {
+          try {
+            uri = await api.connect(connectionId, "master");
+          } catch {
+            uri = undefined;
+          }
+        }
+        uri ??= await provider.currentConnectionUri();
+        if (!uri) {
+          vscode.window.showWarningMessage("No active SQL connection.");
+          return;
+        }
+        const boundUri = uri;
+        const run = (sql: string): Promise<SimpleExecuteResult> =>
+          Promise.resolve(
+            vscode.window.withProgress(
+              { location: vscode.ProgressLocation.Window, title: "SSMS Tools: running query…" },
+              () => api.execute(boundUri, sql)
+            )
+          );
+        openResourceUsage(run, dbName);
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }),
     vscode.commands.registerCommand("ssms.editJob", (node?: SsmsNode) => {
       if (!node?.jobId) {
         vscode.window.showWarningMessage("No job selected.");

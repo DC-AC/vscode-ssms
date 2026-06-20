@@ -116,4 +116,9 @@ export class MssqlApi {
   async execute(connectionUri: string, sql: string): Promise<SimpleExecuteResult> {
     return this.sharing.executeSimpleQuery(connectionUri, sql);
   }
+
+  /** List databases available on a connection (no per-database connect). */
+  async listDatabases(connectionUri: string): Promise<string[]> {
+    return this.sharing.listDatabases(connectionUri);
+  }
 }

@@ -123,7 +123,8 @@ function renderHtml(logType: 1 | 2): string {
   .count { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin: 4px 0; }
   table { border-collapse: collapse; width: 100%; font-size: 12px; }
   th, td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border); vertical-align: top; }
-  th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); border-bottom: 2px solid var(--vscode-panel-border); }
+  th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); border-bottom: 2px solid var(--vscode-panel-border); cursor: pointer; user-select: none; }
+  th .arrow { color: var(--vscode-descriptionForeground); font-size: 0.85em; }
   td.text { white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace); }
   tr:hover td { background: var(--vscode-list-hoverBackground); }
   .error { color: var(--vscode-errorForeground); }
@@ -170,9 +171,10 @@ function renderHtml(logType: 1 | 2): string {
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
-  let columns = [], rows = [];
+  let columns = [], rows = [], sortCol = -1, sortDir = 1;
 
   function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function isNum(v){ return v !== null && v !== "" && !isNaN(Number(v)); }
 
   function sourceColIndex() {
     const i = columns.findIndex(c => /ProcessInfo/i.test(c));
@@ -186,14 +188,30 @@ function renderHtml(logType: 1 | 2): string {
   function render() {
     const srcTerm = $("source").value.trim().toLowerCase();
     const srcIdx = sourceColIndex(), txtIdx = textColIndex();
-    const shown = srcTerm
+    let shown = srcTerm
       ? rows.filter(r => String(r[srcIdx] ?? "").toLowerCase().includes(srcTerm))
-      : rows;
-    $("thead").innerHTML = "<tr>" + columns.map(c => "<th>" + esc(c) + "</th>").join("") + "</tr>";
+      : rows.slice();
+    if (sortCol >= 0) {
+      shown = shown.slice().sort((a, b) => {
+        const x = a[sortCol], y = b[sortCol];
+        if (x === null || x === "") return 1;
+        if (y === null || y === "") return -1;
+        const c = (isNum(x) && isNum(y)) ? (Number(x) - Number(y)) : String(x).localeCompare(String(y));
+        return c * sortDir;
+      });
+    }
+    $("thead").innerHTML = "<tr>" + columns.map((c, i) =>
+      '<th data-i="' + i + '">' + esc(c) + (i === sortCol ? '<span class="arrow"> ' + (sortDir > 0 ? "▲" : "▼") + "</span>" : "") + "</th>"
+    ).join("") + "</tr>";
     $("tbody").innerHTML = shown.map(r => "<tr>" + r.map((v, i) =>
       v === null ? "<td></td>"
                  : "<td" + (i === txtIdx ? ' class="text"' : "") + ">" + esc(v) + "</td>"
     ).join("") + "</tr>").join("");
+    [...$("thead").querySelectorAll("th")].forEach(th => th.addEventListener("click", () => {
+      const i = +th.dataset.i;
+      if (sortCol === i) sortDir = -sortDir; else { sortCol = i; sortDir = 1; }
+      render();
+    }));
     $("count").textContent = shown.length + " row(s)" + (srcTerm ? " (Source filtered)" : "");
     $("msg").innerHTML = "";
   }

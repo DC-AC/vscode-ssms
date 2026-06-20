@@ -85,6 +85,13 @@ export class ServerManagementProvider
     return ctx?.connectionUri;
   }
 
+  /** The connection id the tree is currently showing, if known (used to open a
+   * sibling connection to a different database, e.g. master on Azure SQL DB). */
+  async currentConnectionId(): Promise<string | undefined> {
+    const ctx = await this.ensureContext();
+    return ctx?.connectionId;
+  }
+
   getTreeItem(element: SsmsNode): vscode.TreeItem {
     return element;
   }

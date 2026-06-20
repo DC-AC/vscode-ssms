@@ -2,6 +2,14 @@
 
 All notable changes to **SSMS Tools for SQL Server** are documented here.
 
+## [0.1.2] - 2026-06-19
+
+### Added
+- Azure SQL Database branch (shown on Azure SQL DB):
+  - **Event Log** viewer over `sys.event_log` (connectivity/login events), filterable by severity, date range, and text.
+  - **Resource Usage** per database over `sys.resource_stats`, with optional start/end date filters.
+- Click-to-sort on all grid panes (Backup History, Job History, Log viewer, Event Log, Resource Usage, and generic grids) — numeric-aware, click a header to sort, click again to reverse.
+
 ## [0.1.1] - 2026-06-19
 
 ### Changed

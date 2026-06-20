@@ -106,7 +106,8 @@ function renderHtml(): string {
   .count { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin: 4px 0; }
   table { border-collapse: collapse; width: 100%; font-size: 12px; }
   th, td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border); vertical-align: top; }
-  th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); border-bottom: 2px solid var(--vscode-panel-border); }
+  th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); border-bottom: 2px solid var(--vscode-panel-border); cursor: pointer; user-select: none; }
+  th .arrow { color: var(--vscode-descriptionForeground); font-size: 0.85em; }
   td.msg { white-space: pre-wrap; }
   tr:hover td { background: var(--vscode-list-hoverBackground); }
   .ok { color: var(--vscode-testing-iconPassed, #3fb950); }
@@ -151,24 +152,43 @@ function renderHtml(): string {
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
-  let columns = [];
+  let columns = [], rows = [], sortCol = -1, sortDir = 1;
 
   function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function isNum(v){ return v !== null && v !== "" && !isNaN(Number(v)); }
+  function sorted() {
+    if (sortCol < 0) return rows;
+    return [...rows].sort((a, b) => {
+      const x = a[sortCol], y = b[sortCol];
+      if (x === null || x === "") return 1;
+      if (y === null || y === "") return -1;
+      const c = (isNum(x) && isNum(y)) ? (Number(x) - Number(y)) : String(x).localeCompare(String(y));
+      return c * sortDir;
+    });
+  }
 
-  function render(rows) {
+  function render() {
     const outIdx = columns.indexOf("Outcome");
     const msgIdx = columns.indexOf("Message");
-    $("thead").innerHTML = "<tr>" + columns.map(c => "<th>" + esc(c) + "</th>").join("") + "</tr>";
-    $("tbody").innerHTML = rows.map(r => "<tr>" + r.map((v, i) => {
+    $("thead").innerHTML = "<tr>" + columns.map((c, i) =>
+      '<th data-i="' + i + '">' + esc(c) + (i === sortCol ? '<span class="arrow"> ' + (sortDir > 0 ? "▲" : "▼") + "</span>" : "") + "</th>"
+    ).join("") + "</tr>";
+    $("tbody").innerHTML = sorted().map(r => "<tr>" + r.map((v, i) => {
       if (v === null) return "<td></td>";
       let cls = "";
       if (i === msgIdx) cls = "msg";
       if (i === outIdx) cls = v === "Succeeded" ? "ok" : (v === "Failed" ? "fail" : "");
       return "<td" + (cls ? ' class="' + cls + '"' : "") + ">" + esc(v) + "</td>";
     }).join("") + "</tr>").join("");
+    [...$("thead").querySelectorAll("th")].forEach(th => th.addEventListener("click", () => {
+      const i = +th.dataset.i;
+      if (sortCol === i) sortDir = -sortDir; else { sortCol = i; sortDir = 1; }
+      render();
+    }));
     $("count").textContent = rows.length + " row(s)" + (rows.length === 1000 ? " (showing first 1000)" : "");
     $("msg").innerHTML = "";
   }
+  function load(cols, data) { columns = cols; rows = data; render(); }
 
   function filters() {
     return { jobId: $("job").value, runStatus: $("outcome").value, startDate: $("from").value, endDate: $("to").value };
@@ -191,9 +211,9 @@ function renderHtml(): string {
         if (jb.id === m.selected) o.selected = true;
         sel.appendChild(o);
       }
-      columns = m.columns; render(m.rows);
+      load(m.columns, m.rows);
     } else if (m.type === "rows") {
-      columns = m.columns; render(m.rows);
+      load(m.columns, m.rows);
     } else if (m.type === "error") {
       $("msg").innerHTML = '<p class="error">' + esc(m.message) + "</p>";
     }

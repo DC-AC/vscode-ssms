@@ -1,45 +1,36 @@
 import * as vscode from "vscode";
 import type { SimpleExecuteResult } from "vscode-mssql";
-import {
-  backupHistoryQuery,
-  BACKUP_DATABASES,
-  BackupFilters,
-} from "../queries/management";
-
-/** Runs a query against the active connection and returns the raw result. */
-export type QueryRunner = (sql: string) => Promise<SimpleExecuteResult>;
+import { eventLogQuery, EventLogFilters } from "../queries/azure";
+import type { QueryRunner } from "./backupHistory";
 
 /**
- * Backup History pane with server-side filtering (database, type, date range).
- * The webview posts filter criteria back; we rebuild the query and push rows.
+ * Azure SQL Database event-log viewer (sys.event_log), filterable by severity,
+ * date range, and text. The runner must be bound to the master database.
  */
-export function openBackupHistory(run: QueryRunner): void {
+export function openAzureEventLog(run: QueryRunner): void {
   const panel = vscode.window.createWebviewPanel(
-    "ssms.backupHistory",
-    "Backup History",
+    "ssms.azureEventLog",
+    "Azure SQL Event Log",
     vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true }
   );
   panel.webview.html = renderHtml();
 
-  panel.webview.onDidReceiveMessage(async (msg: { type: string; filters?: BackupFilters }) => {
-    try {
-      if (msg.type === "ready") {
-        const dbs = await run(BACKUP_DATABASES);
-        const databases = dbs.rows.map((r) => r[0]?.displayValue ?? "");
-        const result = await run(backupHistoryQuery({}));
-        panel.webview.postMessage({ type: "init", databases, ...serialize(result) });
-      } else if (msg.type === "apply") {
-        const result = await run(backupHistoryQuery(msg.filters ?? {}));
-        panel.webview.postMessage({ type: "rows", ...serialize(result) });
+  panel.webview.onDidReceiveMessage(
+    async (msg: { type: string; filters?: EventLogFilters }) => {
+      try {
+        if (msg.type === "ready" || msg.type === "apply") {
+          const result = await run(eventLogQuery(msg.filters ?? {}));
+          panel.webview.postMessage({ type: "rows", ...serialize(result) });
+        }
+      } catch (err) {
+        panel.webview.postMessage({
+          type: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
-    } catch (err) {
-      panel.webview.postMessage({
-        type: "error",
-        message: err instanceof Error ? err.message : String(err),
-      });
     }
-  });
+  );
 }
 
 function serialize(result: SimpleExecuteResult): {
@@ -48,7 +39,9 @@ function serialize(result: SimpleExecuteResult): {
 } {
   return {
     columns: result.columnInfo.map((c) => c.columnName),
-    rows: result.rows.map((row) => row.map((c) => (c.isNull ? null : c.displayValue))),
+    rows: result.rows.map((row) =>
+      row.map((c) => (c.isNull ? null : c.displayValue))
+    ),
   };
 }
 
@@ -75,7 +68,8 @@ function renderHtml(): string {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style>
   body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 0 12px 24px; }
-  h2 { font-weight: 600; margin: 12px 0 8px; }
+  h2 { font-weight: 600; margin: 12px 0 4px; }
+  .hint { color: var(--vscode-descriptionForeground); font-size: 0.85em; margin: 0 0 8px; }
   .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end;
              padding: 10px; margin-bottom: 10px;
              background: var(--vscode-editorWidget-background);
@@ -85,46 +79,41 @@ function renderHtml(): string {
   select, input, button { font-family: inherit; font-size: 13px; padding: 3px 6px;
            color: var(--vscode-input-foreground); background: var(--vscode-input-background);
            border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; }
-  button { background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-           border: none; cursor: pointer; padding: 4px 12px; }
+  button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; padding: 4px 12px; }
   button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  button:hover { background: var(--vscode-button-hoverBackground); }
   .count { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin: 4px 0; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--vscode-panel-border); white-space: nowrap; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border); vertical-align: top; }
   th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); border-bottom: 2px solid var(--vscode-panel-border); cursor: pointer; user-select: none; }
   th .arrow { color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+  td.desc { white-space: pre-wrap; }
   tr:hover td { background: var(--vscode-list-hoverBackground); }
-  td.null { color: var(--vscode-descriptionForeground); font-style: italic; }
-  .num { text-align: right; }
+  .sev-Error { color: var(--vscode-errorForeground); }
+  .sev-Warning { color: var(--vscode-editorWarning-foreground, #cca700); }
   .error { color: var(--vscode-errorForeground); }
+  .note { color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+          background: var(--vscode-inputValidation-warningBackground, transparent);
+          border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+          border-radius: 3px; padding: 6px 8px; margin: 0 0 8px; font-size: 0.9em; }
+  .search { min-width: 200px; }
 </style>
 </head>
 <body>
-  <h2>Backup / Restore History</h2>
+  <h2>Azure SQL Event Log</h2>
+  <p class="hint">sys.event_log — connectivity and login events (read from the master database).</p>
   <div class="filters">
     <div class="field">
-      <label for="db">Database</label>
-      <select id="db"><option value="">(all)</option></select>
-    </div>
-    <div class="field">
-      <label for="type">Type</label>
-      <select id="type">
+      <label for="severity">Severity</label>
+      <select id="severity">
         <option value="">(all)</option>
-        <option value="D">Full</option>
-        <option value="I">Differential</option>
-        <option value="L">Log</option>
-        <option value="F">File/Filegroup</option>
+        <option value="2">Error</option>
+        <option value="1">Warning</option>
+        <option value="0">Information</option>
       </select>
     </div>
-    <div class="field">
-      <label for="from">From</label>
-      <input type="date" id="from">
-    </div>
-    <div class="field">
-      <label for="to">To</label>
-      <input type="date" id="to">
-    </div>
+    <div class="field"><label for="from">From</label><input type="date" id="from"></div>
+    <div class="field"><label for="to">To</label><input type="date" id="to"></div>
+    <div class="field"><label for="search">Contains text</label><input type="text" id="search" class="search"></div>
     <button id="apply">Apply</button>
     <button id="reset" class="secondary">Reset</button>
   </div>
@@ -135,10 +124,8 @@ function renderHtml(): string {
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
-  const SIZE_COL = "SizeMB";
   let columns = [], rows = [], sortCol = -1, sortDir = 1;
-
-  function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
   function isNum(v){ return v !== null && v !== "" && !isNaN(Number(v)); }
   function sorted() {
     if (sortCol < 0) return rows;
@@ -152,14 +139,17 @@ function renderHtml(): string {
   }
 
   function render() {
-    const sizeIdx = columns.indexOf(SIZE_COL);
+    const sevIdx = columns.indexOf("Severity");
+    const descIdx = columns.indexOf("Description");
     $("thead").innerHTML = "<tr>" + columns.map((c, i) =>
       '<th data-i="' + i + '">' + esc(c) + (i === sortCol ? '<span class="arrow"> ' + (sortDir > 0 ? "▲" : "▼") + "</span>" : "") + "</th>"
     ).join("") + "</tr>";
-    $("tbody").innerHTML = sorted().map(r => "<tr>" + r.map((v, i) =>
-      v === null ? '<td class="null">NULL</td>'
-                 : '<td' + (i === sizeIdx ? ' class="num"' : '') + '>' + esc(v) + "</td>"
-    ).join("") + "</tr>").join("");
+    $("tbody").innerHTML = sorted().map(r => "<tr>" + r.map((v, i) => {
+      if (v === null) return "<td></td>";
+      let cls = i === descIdx ? "desc" : "";
+      if (i === sevIdx) cls = "sev-" + v;
+      return "<td" + (cls ? ' class="' + cls + '"' : "") + ">" + esc(v) + "</td>";
+    }).join("") + "</tr>").join("");
     [...$("thead").querySelectorAll("th")].forEach(th => th.addEventListener("click", () => {
       const i = +th.dataset.i;
       if (sortCol === i) sortDir = -sortDir; else { sortCol = i; sortDir = 1; }
@@ -169,30 +159,19 @@ function renderHtml(): string {
     $("msg").innerHTML = "";
   }
   function load(cols, data) { columns = cols; rows = data; render(); }
-
-  function currentFilters() {
-    return { database: $("db").value, type: $("type").value, startDate: $("from").value, endDate: $("to").value };
+  function filters() {
+    return { severity: $("severity").value, startDate: $("from").value, endDate: $("to").value, search: $("search").value.trim() };
   }
-
-  $("apply").addEventListener("click", () => vscode.postMessage({ type: "apply", filters: currentFilters() }));
+  $("apply").addEventListener("click", () => vscode.postMessage({ type: "apply", filters: filters() }));
   $("reset").addEventListener("click", () => {
-    $("db").value = ""; $("type").value = ""; $("from").value = ""; $("to").value = "";
+    $("severity").value = ""; $("from").value = ""; $("to").value = ""; $("search").value = "";
     vscode.postMessage({ type: "apply", filters: {} });
   });
-
   window.addEventListener("message", (e) => {
     const m = e.data;
-    if (m.type === "init") {
-      const sel = $("db");
-      for (const d of m.databases) { const o = document.createElement("option"); o.value = d; o.textContent = d; sel.appendChild(o); }
-      load(m.columns, m.rows);
-    } else if (m.type === "rows") {
-      load(m.columns, m.rows);
-    } else if (m.type === "error") {
-      $("msg").innerHTML = '<p class="error">' + esc(m.message) + "</p>";
-    }
+    if (m.type === "rows") { load(m.columns, m.rows); }
+    else if (m.type === "error") { $("msg").innerHTML = '<p class="error">' + esc(m.message) + "</p>"; }
   });
-
   vscode.postMessage({ type: "ready" });
 </script>
 </body>
