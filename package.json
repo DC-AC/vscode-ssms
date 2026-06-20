@@ -2,7 +2,7 @@
   "name": "vscode-ssms",
   "displayName": "SSMS Tools for SQL Server",
   "description": "SSMS-style server management (Management, Resource Governor, SQL Server Agent) on top of the official SQL Server (mssql) extension.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "dcac",
   "license": "MIT",
   "icon": "media/icon.png",

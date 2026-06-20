@@ -2,6 +2,11 @@
 
 All notable changes to **SSMS Tools for SQL Server** are documented here.
 
+## [0.1.1] - 2026-06-19
+
+### Changed
+- Updated repository, issues, and homepage URLs to the `DC-AC/vscode-ssms` GitHub org.
+
 ## [0.1.0] - 2026-06-19
 
 First public release.
