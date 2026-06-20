@@ -1,0 +1,274 @@
+{
+  "name": "vscode-ssms",
+  "displayName": "SSMS Tools for SQL Server",
+  "description": "SSMS-style server management (Management, Resource Governor, SQL Server Agent) on top of the official SQL Server (mssql) extension.",
+  "version": "0.1.0",
+  "publisher": "dcac",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "sql",
+    "sql server",
+    "mssql",
+    "ssms",
+    "agent",
+    "database administration"
+  ],
+  "galleryBanner": {
+    "color": "#1f1f1f",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DC-AC/vscode-ssms.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DC-AC/vscode-ssms/issues"
+  },
+  "homepage": "https://github.com/DC-AC/vscode-ssms#readme",
+  "qna": "marketplace",
+  "extensionDependencies": [
+    "ms-mssql.mssql"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ssms",
+          "title": "SSMS Tools",
+          "icon": "media/sidebar.svg"
+        }
+      ]
+    },
+    "views": {
+      "ssms": [
+        {
+          "id": "ssms.objectExplorer",
+          "name": "Server Management",
+          "icon": "media/sidebar.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "ssms.objectExplorer",
+        "contents": "Open and connect a SQL editor with the SQL Server (mssql) extension, then this view will show SSMS-style server management for that connection.\n\nThe first time, you must grant this extension permission to use your connection:\n[Grant Connection Access](command:ssms.grantAccess)\n\nRequires the SQL Server extension v1.38.0 or later."
+      }
+    ],
+    "commands": [
+      {
+        "command": "ssms.refresh",
+        "title": "Refresh",
+        "category": "SSMS Tools",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ssms.grantAccess",
+        "title": "Grant Connection Access",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.openFromServer",
+        "title": "Open in SSMS Tools",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.resourceGovernorProperties",
+        "title": "Properties",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.viewJobHistory",
+        "title": "View History",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.editJob",
+        "title": "Edit",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.newJob",
+        "title": "New Job",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.deleteJob",
+        "title": "Delete",
+        "category": "SSMS Tools"
+      },
+      { "command": "ssms.newAlert", "title": "New Alert", "category": "SSMS Tools" },
+      { "command": "ssms.editAlert", "title": "Edit", "category": "SSMS Tools" },
+      { "command": "ssms.deleteAlert", "title": "Delete", "category": "SSMS Tools" },
+      { "command": "ssms.newOperator", "title": "New Operator", "category": "SSMS Tools" },
+      { "command": "ssms.editOperator", "title": "Edit", "category": "SSMS Tools" },
+      { "command": "ssms.deleteOperator", "title": "Delete", "category": "SSMS Tools" },
+      { "command": "ssms.newProxy", "title": "New Proxy", "category": "SSMS Tools" },
+      { "command": "ssms.editProxy", "title": "Edit", "category": "SSMS Tools" },
+      { "command": "ssms.deleteProxy", "title": "Delete", "category": "SSMS Tools" },
+      {
+        "command": "ssms.scriptCreate",
+        "title": "Script as CREATE",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.scriptAlter",
+        "title": "Script as ALTER",
+        "category": "SSMS Tools"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ssms.refresh",
+          "when": "view == ssms.objectExplorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ssms.openFromServer",
+          "when": "view == objectExplorer && viewItem =~ /\\btype=(Server)\\b/",
+          "group": "9_SSMSTools@1"
+        },
+        {
+          "command": "ssms.resourceGovernorProperties",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsResourceGovernor",
+          "group": "9_ssms_props@1"
+        },
+        {
+          "command": "ssms.newJob",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAgentJobsRoot",
+          "group": "1_ssms_new@1"
+        },
+        {
+          "command": "ssms.viewJobHistory",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAgentJobsRoot",
+          "group": "9_ssms_props@1"
+        },
+        {
+          "command": "ssms.editJob",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAgentJob",
+          "group": "1_ssms_edit@1"
+        },
+        {
+          "command": "ssms.deleteJob",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAgentJob",
+          "group": "9_ssms_danger@9"
+        },
+        {
+          "command": "ssms.newAlert",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAlertsRoot",
+          "group": "1_ssms_new@1"
+        },
+        {
+          "command": "ssms.editAlert",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAlert",
+          "group": "1_ssms_edit@1"
+        },
+        {
+          "command": "ssms.deleteAlert",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAlert",
+          "group": "9_ssms_danger@9"
+        },
+        {
+          "command": "ssms.newOperator",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsOperatorsRoot",
+          "group": "1_ssms_new@1"
+        },
+        {
+          "command": "ssms.editOperator",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsOperator",
+          "group": "1_ssms_edit@1"
+        },
+        {
+          "command": "ssms.deleteOperator",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsOperator",
+          "group": "9_ssms_danger@9"
+        },
+        {
+          "command": "ssms.newProxy",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsProxiesRoot",
+          "group": "1_ssms_new@1"
+        },
+        {
+          "command": "ssms.editProxy",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsProxy",
+          "group": "1_ssms_edit@1"
+        },
+        {
+          "command": "ssms.deleteProxy",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsProxy",
+          "group": "9_ssms_danger@9"
+        },
+        {
+          "command": "ssms.scriptCreate",
+          "when": "view == ssms.objectExplorer && viewItem =~ /^ssms(ResourcePool|WorkloadGroup|ExternalPool)$/",
+          "group": "9_ssms_script@1"
+        },
+        {
+          "command": "ssms.scriptAlter",
+          "when": "view == ssms.objectExplorer && viewItem =~ /^ssms(ResourcePool|WorkloadGroup|ExternalPool)$/",
+          "group": "9_ssms_script@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ssms.openFromServer",
+          "when": "false"
+        },
+        {
+          "command": "ssms.scriptCreate",
+          "when": "false"
+        },
+        {
+          "command": "ssms.scriptAlter",
+          "when": "false"
+        },
+        {
+          "command": "ssms.viewJobHistory",
+          "when": "false"
+        },
+        {
+          "command": "ssms.editJob",
+          "when": "false"
+        },
+        {
+          "command": "ssms.deleteJob",
+          "when": "false"
+        },
+        { "command": "ssms.editAlert", "when": "false" },
+        { "command": "ssms.deleteAlert", "when": "false" },
+        { "command": "ssms.editOperator", "when": "false" },
+        { "command": "ssms.deleteOperator", "when": "false" },
+        { "command": "ssms.editProxy", "when": "false" },
+        { "command": "ssms.deleteProxy", "when": "false" }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}
