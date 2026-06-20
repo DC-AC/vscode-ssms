@@ -454,5 +454,41 @@ export function buildRootNodes(): SsmsNode[] {
     isAzureSqlDb
   );
 
-  return [management, azure, buildSqlAgentNode()];
+  return [buildDatabasesNode(), management, azure, buildSqlAgentNode()];
+}
+
+/** Databases → each database → the folders we add (Query Store). Mirrors SSMS
+ * Object Explorer without duplicating what the mssql extension already shows.
+ * Reads sys.databases so we can use is_query_store_on per database. */
+function buildDatabasesNode(): SsmsNode {
+  const queryStoreFolder = (db: string): SsmsNode => {
+    const folder = new FolderNode("Query Store", "graph", () => [
+      new CommandLeafNode("Regressed Queries", "arrow-down", "ssms.openQueryStoreRegressed", undefined, [db]),
+      new CommandLeafNode("Overall Resource Consumption", "graph-line", "ssms.openQueryStoreOverall", undefined, [db]),
+      new CommandLeafNode("Top Resource Consuming Queries", "flame", "ssms.openQueryStoreTop", undefined, [db]),
+      new CommandLeafNode("Queries With Forced Plans", "pinned", "ssms.openQueryStoreForcedPlans", undefined, [db]),
+      new CommandLeafNode("Queries With High Variation", "pulse", "ssms.openQueryStoreHighVariation", undefined, [db]),
+      new CommandLeafNode("Query Wait Statistics", "watch", "ssms.openQueryStoreWaits", undefined, [db]),
+      new CommandLeafNode("Tracked Queries", "eye", "ssms.openQueryStoreTracked", undefined, [db]),
+    ]);
+    folder.contextValue = "ssmsQueryStore";
+    folder.objectName = db;
+    return folder;
+  };
+
+  return new AsyncFolderNode("Databases", "database", async (ctx, api) => {
+    const res = await api.execute(ctx.connectionUri, Q.USER_DATABASES);
+    return res.rows.map((_, i) => {
+      const name = cell(res, i, "name");
+      const qsOn = cell(res, i, "is_query_store_on") === "1";
+      if (qsOn) {
+        const node = new AsyncFolderNode(name, "database", async () => [queryStoreFolder(name)]);
+        node.contextValue = "ssmsDatabase";
+        node.objectName = name;
+        return node;
+      }
+      // Query Store is off — show the database as a leaf, with no Query Store folder.
+      return new ItemNode(name, "database", "ssmsDatabase", name);
+    });
+  });
 }

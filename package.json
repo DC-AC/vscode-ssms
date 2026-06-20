@@ -2,7 +2,7 @@
   "name": "vscode-ssms",
   "displayName": "SSMS Tools for SQL Server",
   "description": "SSMS-style server management (Management, Resource Governor, SQL Server Agent) on top of the official SQL Server (mssql) extension.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "publisher": "dcac",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -89,6 +89,16 @@
         "category": "SSMS Tools"
       },
       {
+        "command": "ssms.queryStoreProperties",
+        "title": "Properties",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.databaseProperties",
+        "title": "Properties",
+        "category": "SSMS Tools"
+      },
+      {
         "command": "ssms.viewJobHistory",
         "title": "View History",
         "category": "SSMS Tools"
@@ -145,6 +155,16 @@
         {
           "command": "ssms.resourceGovernorProperties",
           "when": "view == ssms.objectExplorer && viewItem == ssmsResourceGovernor",
+          "group": "9_ssms_props@1"
+        },
+        {
+          "command": "ssms.queryStoreProperties",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsQueryStore",
+          "group": "9_ssms_props@1"
+        },
+        {
+          "command": "ssms.databaseProperties",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsDatabase",
           "group": "9_ssms_props@1"
         },
         {
@@ -253,7 +273,16 @@
         { "command": "ssms.editOperator", "when": "false" },
         { "command": "ssms.deleteOperator", "when": "false" },
         { "command": "ssms.editProxy", "when": "false" },
-        { "command": "ssms.deleteProxy", "when": "false" }
+        { "command": "ssms.deleteProxy", "when": "false" },
+        { "command": "ssms.openQueryStoreTop", "when": "false" },
+        { "command": "ssms.openQueryStoreRegressed", "when": "false" },
+        { "command": "ssms.openQueryStoreWaits", "when": "false" },
+        { "command": "ssms.openQueryStoreForcedPlans", "when": "false" },
+        { "command": "ssms.openQueryStoreHighVariation", "when": "false" },
+        { "command": "ssms.openQueryStoreTracked", "when": "false" },
+        { "command": "ssms.openQueryStoreOverall", "when": "false" },
+        { "command": "ssms.queryStoreProperties", "when": "false" },
+        { "command": "ssms.databaseProperties", "when": "false" }
       ]
     }
   },

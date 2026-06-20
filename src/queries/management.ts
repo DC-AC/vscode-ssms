@@ -72,6 +72,15 @@ WHERE database_name IS NOT NULL
 ORDER BY database_name;
 `;
 
+/** Online user databases with their Query Store state. */
+export const USER_DATABASES = `
+SELECT name, is_query_store_on
+FROM sys.databases
+WHERE name NOT IN ('master', 'model', 'msdb', 'tempdb')
+  AND state = 0
+ORDER BY name;
+`;
+
 /** Enumerate the available SQL Server error logs (current + archives). */
 export const ENUM_ERROR_LOGS = `EXEC sys.sp_enumerrorlogs;`;
 

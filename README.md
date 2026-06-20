@@ -19,6 +19,25 @@ and surfaces the server-management tree SSMS has but mssql doesn't:
 - **Resource Governor** — Resource Pools → Workload Groups, External Resource Pools, with an
   editable **Properties** dialog (enable/disable, edit pools/groups, classifier) and
   **Script as CREATE/ALTER** on user-defined objects.
+- **Database Properties** — right-click any database for an editable **Query Store** settings
+  dialog (operation mode, capture mode, max size, intervals). Applying turns Query Store on/off
+  and refreshes the tree from the server.
+
+### Query Store
+
+Each Query Store-enabled database gets a **Query Store** folder with the SSMS reports:
+
+- **Regressed Queries** — queries that regressed versus a preceding baseline.
+- **Overall Resource Consumption** — total Duration, Execution Count, CPU, and Logical Reads
+  bucketed over time; click a bar to drill into the top queries for that bucket.
+- **Top Resource Consuming Queries** — ranked by a chosen metric and statistic.
+- **Queries With Forced Plans** — plan-summary chart with **Force / Unforce / Open Plan**.
+- **Queries With High Variation** — ranked by variability (coefficient of variation or std dev).
+- **Query Wait Statistics** — wait categories with a per-query plan-summary chart.
+- **Tracked Queries** — follow a specific Query Id's plans over time.
+
+Reports share a plan-summary **bubble chart** (execution-count sizing, forced-plan rings, hover
+tooltips) and can open the graphical **showplan** in the mssql plan viewer.
 
 ### SQL Server Agent
 - **Jobs** — expand to Steps and Schedules; right-click for **View History** (filterable),

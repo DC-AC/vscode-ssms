@@ -16,6 +16,9 @@ import { EntityConfig, PROXY, ALERT } from "./scripting/agentEntities";
 import { openOperatorProperties } from "./webviews/operatorProperties";
 import { openAzureEventLog } from "./webviews/azureEventLog";
 import { openResourceUsage } from "./webviews/resourceUsage";
+import { openQueryStoreTopConsumers, openQueryStoreRegressed, openQueryStoreHighVariation } from "./webviews/queryStore";
+import { openQueryStoreWaits, openQueryStoreForcedPlans, openQueryStoreTracked, openQueryStoreOverall } from "./webviews/queryStoreExtra";
+import { QS_OPTIONS, buildQueryStoreAlter, QueryStoreOptions } from "./queries/queryStore";
 import { deleteOperatorStatement } from "./scripting/operator";
 
 /**
@@ -43,6 +46,58 @@ async function withTreeConnection(
         vscode.window.withProgress(
           { location: vscode.ProgressLocation.Window, title: "SSMS Tools: running query…" },
           () => api.execute(uri, sql)
+        )
+      );
+    await work(run);
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
+
+/** Bracket-quote a database identifier for a USE statement. */
+function bracketDb(name: string): string {
+  return "[" + name.replace(/]/g, "]]") + "]";
+}
+
+/**
+ * Hand `work` a query-runner bound to a specific database. Prefers a dedicated
+ * connection to that database (saved connections); otherwise runs on the current
+ * connection with a `USE [db]` prefix (works on boxed SQL Server / Managed
+ * Instance). Used for per-database features like Query Store.
+ */
+async function withDatabaseConnection(
+  provider: ServerManagementProvider,
+  database: string,
+  work: (run: (sql: string) => Promise<SimpleExecuteResult>) => Promise<void>
+): Promise<void> {
+  try {
+    const api = await MssqlApi.acquire();
+    const connectionId = await provider.currentConnectionId();
+    let uri: string | undefined;
+    let prefix = "";
+    if (connectionId) {
+      try {
+        uri = await api.connect(connectionId, database);
+      } catch {
+        uri = undefined;
+      }
+    }
+    if (!uri) {
+      uri = await provider.currentConnectionUri();
+      prefix = `USE ${bracketDb(database)};\n`;
+    }
+    if (!uri) {
+      vscode.window.showWarningMessage("No active SQL connection.");
+      return;
+    }
+    const boundUri = uri;
+    const run = (sql: string): Promise<SimpleExecuteResult> =>
+      Promise.resolve(
+        vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Window, title: "SSMS Tools: running query…" },
+          () => api.execute(boundUri, prefix + sql)
         )
       );
     await work(run);
@@ -162,6 +217,48 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   provider.setView(view);
 
+  // Open the Query Store settings form for a database. Shared by the database
+  // "Properties" right-click and the Query Store folder "Properties" command.
+  const openQueryStorePropertiesForm = (db: string, title: string): Thenable<void> =>
+    withDatabaseConnection(provider, db, async (run) => {
+      const res = await run(QS_OPTIONS);
+      const get = (col: string): string => {
+        const i = res.columnInfo.findIndex((c) => c.columnName === col);
+        const v = i >= 0 ? res.rows[0]?.[i] : undefined;
+        return v && !v.isNull ? v.displayValue : "";
+      };
+      const initial: Record<string, string> = {
+        operation_mode: get("actual_state_desc") || "READ_WRITE",
+        max_storage_size_mb: get("max_storage_size_mb"),
+        query_capture_mode: get("query_capture_mode_desc") || "AUTO",
+        size_based_cleanup_mode: get("size_based_cleanup_mode_desc") || "AUTO",
+        stale_query_threshold_days: get("stale_query_threshold_days"),
+        max_plans_per_query: get("max_plans_per_query"),
+        wait_stats_capture_mode: get("wait_stats_capture_mode_desc") || "ON",
+        flush_interval_seconds: get("flush_interval_seconds"),
+        interval_length_minutes: get("interval_length_minutes"),
+      };
+      openEntityForm(run, {
+        title,
+        fields: [
+          { key: "operation_mode", label: "Operation Mode", type: "select", options: ["READ_WRITE", "READ_ONLY", "OFF"] },
+          { key: "max_storage_size_mb", label: "Max Size (MB)", type: "number" },
+          { key: "query_capture_mode", label: "Query Capture Mode", type: "select", options: ["AUTO", "ALL", "NONE"] },
+          { key: "size_based_cleanup_mode", label: "Size-Based Cleanup", type: "select", options: ["AUTO", "OFF"] },
+          { key: "stale_query_threshold_days", label: "Stale Query Threshold (days)", type: "number" },
+          { key: "max_plans_per_query", label: "Max Plans Per Query", type: "number" },
+          { key: "wait_stats_capture_mode", label: "Wait Stats Capture", type: "select", options: ["ON", "OFF"] },
+          { key: "flush_interval_seconds", label: "Data Flush Interval (sec)", type: "number" },
+          { key: "interval_length_minutes", label: "Statistics Collection Interval (min)", type: "number" },
+        ],
+        initial,
+        makeBatch: (v) => buildQueryStoreAlter(v as unknown as QueryStoreOptions),
+        // Refresh the tree so a database that just turned Query Store on/off
+        // gains or loses its Query Store folder.
+        onApplied: () => provider.refresh(),
+      });
+    });
+
   context.subscriptions.push(
     view,
     vscode.commands.registerCommand("ssms.refresh", () => provider.refresh()),
@@ -191,6 +288,55 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ssms.openBackupHistory", () =>
       withTreeConnection(provider, async (run) => openBackupHistory(run))
     ),
+    vscode.commands.registerCommand("ssms.openQueryStoreTop", (database?: string) =>
+      withDatabaseConnection(provider, database ?? "", async (run) =>
+        openQueryStoreTopConsumers(run, context.globalState)
+      )
+    ),
+    vscode.commands.registerCommand("ssms.openQueryStoreRegressed", (database?: string) =>
+      withDatabaseConnection(provider, database ?? "", async (run) =>
+        openQueryStoreRegressed(run, context.globalState)
+      )
+    ),
+    vscode.commands.registerCommand("ssms.openQueryStoreWaits", (database?: string) =>
+      withDatabaseConnection(provider, database ?? "", async (run) =>
+        openQueryStoreWaits(run, context.globalState)
+      )
+    ),
+    vscode.commands.registerCommand("ssms.openQueryStoreForcedPlans", (database?: string) =>
+      withDatabaseConnection(provider, database ?? "", async (run) =>
+        openQueryStoreForcedPlans(run, context.globalState)
+      )
+    ),
+    vscode.commands.registerCommand("ssms.openQueryStoreHighVariation", (database?: string) =>
+      withDatabaseConnection(provider, database ?? "", async (run) =>
+        openQueryStoreHighVariation(run, context.globalState)
+      )
+    ),
+    vscode.commands.registerCommand("ssms.openQueryStoreTracked", (database?: string) =>
+      withDatabaseConnection(provider, database ?? "", async (run) =>
+        openQueryStoreTracked(run, context.globalState)
+      )
+    ),
+    vscode.commands.registerCommand("ssms.openQueryStoreOverall", (database?: string) =>
+      withDatabaseConnection(provider, database ?? "", async (run) =>
+        openQueryStoreOverall(run, context.globalState)
+      )
+    ),
+    vscode.commands.registerCommand("ssms.queryStoreProperties", (node?: SsmsNode) => {
+      const db = node?.objectName;
+      if (!db) {
+        return;
+      }
+      return openQueryStorePropertiesForm(db, `Query Store Properties — ${db}`);
+    }),
+    vscode.commands.registerCommand("ssms.databaseProperties", (node?: SsmsNode) => {
+      const db = node?.objectName;
+      if (!db) {
+        return;
+      }
+      return openQueryStorePropertiesForm(db, `Database Properties — ${db}`);
+    }),
     vscode.commands.registerCommand(
       "ssms.openErrorLog",
       (logNumber?: number, logType?: 1 | 2) =>
