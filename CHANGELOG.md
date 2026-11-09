@@ -2,6 +2,19 @@
 
 All notable changes to **SSMS Tools for SQL Server** are documented here.
 
+## [0.3.0] - 2026-11-08
+
+### Added
+- **Always On High Availability** branch (shown on HADR-enabled on-premises / Managed Instance
+  servers), mirroring SSMS:
+  - **Availability Groups → _AG_ → Availability Replicas**, each replica showing its current role
+    and seeding mode (e.g. `PRIMARY · Seeding: AUTOMATIC`).
+  - **Availability Replica Properties** — right-click a replica to turn **Automatic Seeding** on
+    (`AUTOMATIC`) or off (`MANUAL`); OK applies the `ALTER AVAILABILITY GROUP … MODIFY REPLICA …
+    WITH (SEEDING_MODE = …)` and Script opens it in a SQL editor.
+  - Primary-only guard: opening the Properties dialog while connected to a secondary warns that the
+    change must run on the primary (naming it), since `MODIFY REPLICA` is primary-only.
+
 ## [0.2.0] - 2026-06-20
 
 ### Added

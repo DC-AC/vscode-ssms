@@ -4,6 +4,7 @@ import { ServerContext, isAzureSqlDb, isBoxedProduct } from "../server/context";
 import * as Q from "../queries/management";
 import * as RG from "../queries/resourceGovernor";
 import * as Agent from "../queries/agent";
+import * as Hadr from "../queries/alwaysOn";
 import type { ScriptTarget } from "../scripting/resourceGovernor";
 
 /**
@@ -17,6 +18,8 @@ export abstract class SsmsNode extends vscode.TreeItem {
   jobId?: string;
   /** Object name, set on Alert/Operator/Proxy item nodes for context commands. */
   objectName?: string;
+  /** Availability group name, set on AG replica nodes for context commands. */
+  agName?: string;
 
   constructor(
     label: string,
@@ -405,6 +408,48 @@ function buildAgentRoot(
   );
 }
 
+/** Always On High Availability subtree: Availability Groups → each AG →
+ * Availability Replicas → each replica (with Properties for seeding mode).
+ * Gated to HADR-enabled boxed / Managed Instance servers (not Azure SQL DB). */
+function buildAlwaysOnNode(): SsmsNode {
+  const replicasFolder = (agName: string): SsmsNode =>
+    new AsyncFolderNode("Availability Replicas", "server", async (ctx, api) => {
+      const res = await api.execute(ctx.connectionUri, Hadr.replicasForGroup(agName));
+      return res.rows.map((_, i) => {
+        const name = cell(res, i, "Name");
+        const seeding = cell(res, i, "SeedingMode");
+        const role = cell(res, i, "Role");
+        const node = new ItemNode(name, "server-process", "ssmsAgReplica", name);
+        node.agName = agName;
+        node.description = [role, seeding ? `Seeding: ${seeding}` : ""]
+          .filter(Boolean)
+          .join(" · ");
+        return node;
+      });
+    });
+
+  const groupsFolder = new AsyncFolderNode(
+    "Availability Groups",
+    "server-environment",
+    async (ctx, api) => {
+      const res = await api.execute(ctx.connectionUri, Hadr.AVAILABILITY_GROUPS);
+      return res.rows.map((_, i) => {
+        const name = cell(res, i, "name");
+        return new AsyncFolderNode(name, "server-environment", async () => [
+          replicasFolder(name),
+        ]);
+      });
+    }
+  );
+
+  return new FolderNode(
+    "Always On High Availability",
+    "server-environment",
+    () => [groupsFolder],
+    (ctx) => ctx.isHadrEnabled && !isAzureSqlDb(ctx)
+  );
+}
+
 /** Top-level children of the view: the SSMS server-management folders. */
 export function buildRootNodes(): SsmsNode[] {
   const management = new FolderNode(
@@ -454,7 +499,13 @@ export function buildRootNodes(): SsmsNode[] {
     isAzureSqlDb
   );
 
-  return [buildDatabasesNode(), management, azure, buildSqlAgentNode()];
+  return [
+    buildDatabasesNode(),
+    management,
+    azure,
+    buildSqlAgentNode(),
+    buildAlwaysOnNode(),
+  ];
 }
 
 /** Databases → each database → the folders we add (Query Store). Mirrors SSMS

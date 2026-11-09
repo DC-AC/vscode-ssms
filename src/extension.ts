@@ -20,6 +20,7 @@ import { openQueryStoreTopConsumers, openQueryStoreRegressed, openQueryStoreHigh
 import { openQueryStoreWaits, openQueryStoreForcedPlans, openQueryStoreTracked, openQueryStoreOverall } from "./webviews/queryStoreExtra";
 import { QS_OPTIONS, buildQueryStoreAlter, QueryStoreOptions } from "./queries/queryStore";
 import { deleteOperatorStatement } from "./scripting/operator";
+import { replicaSeeding, buildSeedingModeAlter, SeedingMode, agPrimaryReplica } from "./queries/alwaysOn";
 
 /**
  * Hand a query-runner bound to the connection the tree is currently showing
@@ -493,6 +494,55 @@ export function activate(context: vscode.ExtensionContext): void {
         await run(deleteJobStatement(jobId));
         vscode.window.showInformationMessage(`Job "${name}" deleted.`);
         provider.refresh();
+      });
+    }),
+    vscode.commands.registerCommand("ssms.agReplicaProperties", (node?: SsmsNode) => {
+      const ag = node?.agName;
+      const replica = node?.objectName;
+      if (!ag || !replica) {
+        return;
+      }
+      return withTreeConnection(provider, async (run) => {
+        // SEEDING_MODE can only be changed on the primary replica. If the tree is
+        // following a secondary, warn before opening so the user understands why
+        // Apply may fail (Script still works for running on the primary).
+        const cell1 = (r: SimpleExecuteResult, col: string): string => {
+          const idx = r.columnInfo.findIndex((c) => c.columnName === col);
+          const val = idx >= 0 ? r.rows[0]?.[idx] : undefined;
+          return val && !val.isNull ? val.displayValue : "";
+        };
+        const roleRes = await run(agPrimaryReplica(ag));
+        const primary = cell1(roleRes, "primary_replica");
+        const local = cell1(roleRes, "local_server");
+        if (primary && local && primary.toLowerCase() !== local.toLowerCase()) {
+          const choice = await vscode.window.showWarningMessage(
+            `Automatic Seeding can only be changed on the primary replica of "${ag}", which is "${primary}". This connection is "${local}", so applying here will fail — use Script and run it on the primary, or reconnect to the primary.`,
+            { modal: true },
+            "Open Anyway"
+          );
+          if (choice !== "Open Anyway") {
+            return;
+          }
+        }
+        const res = await run(replicaSeeding(ag, replica));
+        const i = res.columnInfo.findIndex((c) => c.columnName === "seeding_mode");
+        const v = i >= 0 ? res.rows[0]?.[i] : undefined;
+        const current = v && !v.isNull ? v.displayValue : "MANUAL";
+        openEntityForm(run, {
+          title: `Availability Replica Properties — ${replica}`,
+          fields: [
+            {
+              key: "seeding_mode",
+              label: "Automatic Seeding",
+              type: "select",
+              options: ["AUTOMATIC", "MANUAL"],
+            },
+          ],
+          initial: { seeding_mode: current === "AUTOMATIC" ? "AUTOMATIC" : "MANUAL" },
+          makeBatch: (vals) =>
+            buildSeedingModeAlter(ag, replica, vals.seeding_mode as SeedingMode),
+          onApplied: () => provider.refresh(),
+        });
       });
     }),
     vscode.commands.registerCommand("ssms.resourceGovernorProperties", () =>

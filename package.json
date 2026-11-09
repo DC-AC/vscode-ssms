@@ -2,7 +2,7 @@
   "name": "vscode-ssms",
   "displayName": "SSMS Tools for SQL Server",
   "description": "SSMS-style server management (Management, Resource Governor, SQL Server Agent) on top of the official SQL Server (mssql) extension.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "dcac",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -99,6 +99,11 @@
         "category": "SSMS Tools"
       },
       {
+        "command": "ssms.agReplicaProperties",
+        "title": "Properties",
+        "category": "SSMS Tools"
+      },
+      {
         "command": "ssms.viewJobHistory",
         "title": "View History",
         "category": "SSMS Tools"
@@ -165,6 +170,11 @@
         {
           "command": "ssms.databaseProperties",
           "when": "view == ssms.objectExplorer && viewItem == ssmsDatabase",
+          "group": "9_ssms_props@1"
+        },
+        {
+          "command": "ssms.agReplicaProperties",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAgReplica",
           "group": "9_ssms_props@1"
         },
         {
@@ -282,7 +292,8 @@
         { "command": "ssms.openQueryStoreTracked", "when": "false" },
         { "command": "ssms.openQueryStoreOverall", "when": "false" },
         { "command": "ssms.queryStoreProperties", "when": "false" },
-        { "command": "ssms.databaseProperties", "when": "false" }
+        { "command": "ssms.databaseProperties", "when": "false" },
+        { "command": "ssms.agReplicaProperties", "when": "false" }
       ]
     }
   },
