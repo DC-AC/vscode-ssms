@@ -412,8 +412,8 @@ function buildAgentRoot(
  * Availability Replicas → each replica (with Properties for seeding mode).
  * Gated to HADR-enabled boxed / Managed Instance servers (not Azure SQL DB). */
 function buildAlwaysOnNode(): SsmsNode {
-  const replicasFolder = (agName: string): SsmsNode =>
-    new AsyncFolderNode("Availability Replicas", "server", async (ctx, api) => {
+  const replicasFolder = (agName: string): SsmsNode => {
+    const folder = new AsyncFolderNode("Availability Replicas", "server", async (ctx, api) => {
       const res = await api.execute(ctx.connectionUri, Hadr.replicasForGroup(agName));
       return res.rows.map((_, i) => {
         const name = cell(res, i, "Name");
@@ -427,6 +427,11 @@ function buildAlwaysOnNode(): SsmsNode {
         return node;
       });
     });
+    // Right-click target for "Add Replica".
+    folder.contextValue = "ssmsAgReplicasRoot";
+    folder.agName = agName;
+    return folder;
+  };
 
   const groupsFolder = new AsyncFolderNode(
     "Availability Groups",
@@ -435,12 +440,19 @@ function buildAlwaysOnNode(): SsmsNode {
       const res = await api.execute(ctx.connectionUri, Hadr.AVAILABILITY_GROUPS);
       return res.rows.map((_, i) => {
         const name = cell(res, i, "name");
-        return new AsyncFolderNode(name, "server-environment", async () => [
+        const ag = new AsyncFolderNode(name, "server-environment", async () => [
           replicasFolder(name),
         ]);
+        // Right-click target for AG Properties / Delete.
+        ag.contextValue = "ssmsAg";
+        ag.agName = name;
+        ag.objectName = name;
+        return ag;
       });
     }
   );
+  // Right-click target for "New Availability Group".
+  groupsFolder.contextValue = "ssmsAgGroupsRoot";
 
   return new FolderNode(
     "Always On High Availability",

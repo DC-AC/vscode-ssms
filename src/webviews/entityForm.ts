@@ -17,6 +17,14 @@ export interface FieldDef {
   options?: string[];
   /** Choices for a checklist field (multi-select); value stored as string[]. */
   choices?: Array<{ value: string; label: string }>;
+  /** Auto-fill this field from another field's value as the user types it,
+   * using `autoTemplate` with `{v}` as the placeholder (e.g. "TCP://{v}:5022").
+   * Stops once the user edits this field directly. */
+  autoFrom?: string;
+  autoTemplate?: string;
+  /** When the source value is a bare host (no dot), append `.autoSuffix` before
+   * applying the template, so e.g. "ag2" becomes an FQDN "ag2.<domain>". */
+  autoSuffix?: string;
 }
 
 export type FormValues = Record<string, string | boolean | string[]>;
@@ -27,6 +35,10 @@ export interface EntityFormConfig {
   initial: FormValues;
   /** Build the msdb proc batch from the edited values. */
   makeBatch: (values: FormValues) => string;
+  /** Optional async validation run before OK executes. Return an error message
+   * to block execution (shown in the form), or undefined to proceed. Not run
+   * for Script. */
+  preApply?: (values: FormValues) => Promise<string | undefined>;
   onApplied: () => void;
 }
 
@@ -54,6 +66,13 @@ export function openEntityForm(run: QueryRunner, cfg: EntityFormConfig): void {
         } else if (msg.type === "apply" && msg.values) {
           const batch = cfg.makeBatch(msg.values);
           if (msg.execute) {
+            if (cfg.preApply) {
+              const err = await cfg.preApply(msg.values);
+              if (err) {
+                panel.webview.postMessage({ type: "error", message: err });
+                return;
+              }
+            }
             await run(batch);
             vscode.window.showInformationMessage(`${cfg.title}: applied.`);
             cfg.onApplied();
@@ -120,7 +139,10 @@ function renderHtml(title: string, fields: FieldDef[]): string {
         return `<div class="row col"><label>${esc(f.label)}</label><div class="checklist" data-key="${f.key}" data-multi="1">${items}</div></div>`;
       }
       const inputType = f.type === "number" ? "number" : "text";
-      return `<div class="row"><label class="inline" for="f_${f.key}">${esc(f.label)}</label><input type="${inputType}" data-key="${f.key}" id="f_${f.key}"></div>`;
+      const auto = f.autoFrom
+        ? ` data-auto-from="${esc(f.autoFrom)}" data-auto-template="${esc(f.autoTemplate ?? "{v}")}" data-auto-suffix="${esc(f.autoSuffix ?? "")}"`
+        : "";
+      return `<div class="row"><label class="inline" for="f_${f.key}">${esc(f.label)}</label><input type="${inputType}" data-key="${f.key}" id="f_${f.key}"${auto}></div>`;
     })
     .join("\n");
 
@@ -164,6 +186,23 @@ function renderHtml(title: string, fields: FieldDef[]): string {
 <script nonce="${nc}">
   const vscode = acquireVsCodeApi();
   const fields = [...document.querySelectorAll("[data-key]")];
+  // Auto-fill derived fields (e.g. Endpoint URL from Server Name) until the
+  // user edits the derived field directly.
+  for (const el of fields) {
+    const from = el.dataset.autoFrom;
+    if (!from) continue;
+    const src = document.querySelector('[data-key="' + from + '"]');
+    if (!src) continue;
+    const tmpl = el.dataset.autoTemplate || "{v}";
+    const suffix = el.dataset.autoSuffix || "";
+    el.addEventListener("input", () => { el.dataset.dirty = "1"; });
+    src.addEventListener("input", () => {
+      if (el.dataset.dirty) return;
+      const raw = src.value.trim();
+      const host = raw && suffix && !raw.includes(".") ? raw + "." + suffix : raw;
+      el.value = tmpl.split("{v}").join(host);
+    });
+  }
   function values() {
     const v = {};
     for (const el of fields) {

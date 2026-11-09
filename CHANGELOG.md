@@ -2,6 +2,46 @@
 
 All notable changes to **SSMS Tools for SQL Server** are documented here.
 
+## [0.4.0] - 2026-11-08
+
+### Added
+- **Availability Group lifecycle** under Always On High Availability, mirroring SSMS right-click actions:
+  - **New Availability Group** (right-click **Availability Groups**) — name, cluster type, databases,
+    automated backup preference, database-level health detection, and one or more replicas. Creates the
+    AG on the connected (primary) instance; because the extension drives only the primary connection,
+    each secondary's endpoint creation, `JOIN`, and `GRANT CREATE ANY DATABASE` (for automatic
+    seeding) is emitted as a ready-to-run block in the script to run on that secondary. The
+    database-mirroring (`Hadr_endpoint`) endpoint is created if missing — on the primary as part of
+    the applied batch and on each secondary in its block — using the TCP port from that replica's
+    endpoint URL in the Replicas box.
+  - **Availability Group Properties** (right-click an **AG**) — an SSMS-style per-replica grid
+    (Availability Mode, Failover Mode, Connections in Primary Role, Readable Secondary, Seeding Mode,
+    Session Timeout), scaling to any number of replicas, plus AG-level settings below it: Automated
+    Backup Preference, Required Synchronized Secondaries To Commit, Health Check Timeout, and Database
+    Level Health Detection. Only the changed settings are scripted/applied (one `MODIFY REPLICA` per
+    changed attribute, `SET` for AG options).
+  - **Delete** (right-click an **AG**) — `DROP AVAILABILITY GROUP` after a modal confirm; databases are
+    left in place.
+  - **Add Replica** (right-click **Availability Replicas**) — server, endpoint URL, availability mode,
+    failover mode, and seeding mode; `ADD REPLICA` runs on the primary, then offers to **connect to the
+    new secondary and create its endpoint + `JOIN` automatically** (via the SQL Server extension's
+    connection dialog). Declining leaves the ready-to-run `JOIN` script for that server.
+  - **Remove from Availability Group** (right-click a **replica**) — `REMOVE REPLICA` on the primary,
+    then offers to generate a `DROP DATABASE` script (naming each AG database) to run on the removed
+    server, where those databases are left behind.
+  - All AG-config actions keep the primary-only guard: acting from a secondary warns and offers Script.
+  - **Version awareness**: settings that need a newer SQL Server are hidden/disabled based on the
+    connected instance's major version (Seeding Mode & Database Level Health Detection need 2016+,
+    Required Synchronized Secondaries & `CONFIGURATION_ONLY`/`CLUSTER_TYPE NONE|EXTERNAL` need 2017+),
+    and **New Availability Group** gains a **Per-Database DTC Support** (`DTC_SUPPORT = PER_DB`, 2016+)
+    checkbox. A replica must be the same or a higher major version than the primary: New AG / Add Replica
+    offer an optional up-front check (via the SQL Server extension's connection dialog), and every
+    generated secondary `JOIN` block also self-checks and aborts with a clear error if the version is lower.
+
+### Changed
+- The Automatic Seeding control moved from per-replica **Properties** to the **Availability Group
+  Properties** dialog (per replica). Replica right-click now offers **Remove from Availability Group**.
+
 ## [0.3.1] - 2026-11-08
 
 ### Fixed

@@ -11,7 +11,7 @@ import { openErrorLog } from "./webviews/errorLog";
 import { openJobHistory } from "./webviews/jobHistory";
 import { openJobProperties } from "./webviews/jobProperties";
 import { deleteJobStatement } from "./scripting/agentJob";
-import { openEntityForm, FormValues } from "./webviews/entityForm";
+import { openEntityForm, FormValues, FieldDef } from "./webviews/entityForm";
 import { EntityConfig, PROXY, ALERT } from "./scripting/agentEntities";
 import { openOperatorProperties } from "./webviews/operatorProperties";
 import { openAzureEventLog } from "./webviews/azureEventLog";
@@ -20,7 +20,35 @@ import { openQueryStoreTopConsumers, openQueryStoreRegressed, openQueryStoreHigh
 import { openQueryStoreWaits, openQueryStoreForcedPlans, openQueryStoreTracked, openQueryStoreOverall } from "./webviews/queryStoreExtra";
 import { QS_OPTIONS, buildQueryStoreAlter, QueryStoreOptions } from "./queries/queryStore";
 import { deleteOperatorStatement } from "./scripting/operator";
-import { replicaSeeding, buildSeedingModeAlter, SeedingMode, agPrimaryReplica } from "./queries/alwaysOn";
+import {
+  agPrimaryReplica,
+  replicaConfig,
+  agProperties as agPropertiesQuery,
+  agDatabases,
+  primaryEndpointUrl,
+  LOCAL_SERVER_NAME,
+  SERVER_MAJOR_VERSION,
+  FEATURE_MIN_MAJOR,
+  buildCreateAg,
+  buildDropAg,
+  buildAddReplica,
+  buildReplicaJoin,
+  buildRemoveReplica,
+  buildDropDatabases,
+  buildModifyReplica,
+  buildAgLevelAlter,
+  SeedingMode,
+  AvailabilityMode,
+  FailoverMode,
+  ClusterType,
+  ReplicaSpec,
+} from "./queries/alwaysOn";
+import {
+  openAvailabilityGroupProperties,
+  ReplicaRow,
+  AgLevel,
+} from "./webviews/availabilityGroupProperties";
+import { USER_DATABASES } from "./queries/management";
 
 /**
  * Hand a query-runner bound to the connection the tree is currently showing
@@ -60,6 +88,75 @@ async function withTreeConnection(
 /** Bracket-quote a database identifier for a USE statement. */
 function bracketDb(name: string): string {
   return "[" + name.replace(/]/g, "]]") + "]";
+}
+
+/** Read one cell from a result by row + column name; "" when null/missing. */
+function cellAt(r: SimpleExecuteResult, row: number, col: string): string {
+  const idx = r.columnInfo.findIndex((c) => c.columnName === col);
+  const v = idx >= 0 ? r.rows[row]?.[idx] : undefined;
+  return v && !v.isNull ? v.displayValue : "";
+}
+
+/**
+ * Best-effort pre-check that each named replica is the same or a higher SQL
+ * Server major version than the primary. For each server, offers to open mssql's
+ * connection dialog (the user authenticates to the replica); reads its major
+ * version and returns an error message if it's lower. Skipping, cancelling, or
+ * an mssql build without `promptForConnection` all fall through to undefined —
+ * the in-script JOIN guard still enforces the rule on the secondary.
+ */
+async function preCheckReplicaVersions(
+  servers: string[],
+  primaryMajor: number
+): Promise<string | undefined> {
+  const api = await MssqlApi.acquire();
+  for (const server of servers) {
+    const choice = await vscode.window.showInformationMessage(
+      `Verify the SQL Server version of replica "${server}"? You'll be asked to connect to it.`,
+      { modal: true },
+      "Connect & Verify",
+      "Skip"
+    );
+    if (choice !== "Connect & Verify") {
+      return undefined; // skip this and any remaining checks
+    }
+    const res = await api.promptForServerMajorVersion();
+    if (res === "unsupported") {
+      vscode.window.showWarningMessage(
+        "This SQL Server (mssql) build can't pre-check replica versions; the JOIN script will verify it on the secondary instead."
+      );
+      return undefined;
+    }
+    if (res === "cancelled") {
+      return undefined; // user backed out of the connection dialog
+    }
+    if (res.major && res.major < primaryMajor) {
+      return `Replica "${res.server}" is SQL Server major version ${res.major}, lower than the primary (major ${primaryMajor}). An availability replica must be the same or a higher major version. Change or upgrade the replica, then try again.`;
+    }
+  }
+  return undefined;
+}
+
+/** Parse the New AG "replicas" textarea: one replica per line, as
+ * `server, endpointURL, SYNC|ASYNC, AUTO|MANUAL (failover), AUTO|MANUAL (seeding)`. */
+function parseReplicaLines(text: string): ReplicaSpec[] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const p = line.split(",").map((s) => s.trim());
+      return {
+        server: p[0] ?? "",
+        endpointUrl: p[1] ?? "",
+        availabilityMode: (/^async/i.test(p[2] ?? "")
+          ? "ASYNCHRONOUS_COMMIT"
+          : "SYNCHRONOUS_COMMIT") as AvailabilityMode,
+        failoverMode: (/^auto/i.test(p[3] ?? "") ? "AUTOMATIC" : "MANUAL") as FailoverMode,
+        seedingMode: (/^man/i.test(p[4] ?? "") ? "MANUAL" : "AUTOMATIC") as SeedingMode,
+      };
+    })
+    .filter((r) => r.server);
 }
 
 /**
@@ -496,27 +593,99 @@ export function activate(context: vscode.ExtensionContext): void {
         provider.refresh();
       });
     }),
-    vscode.commands.registerCommand("ssms.agReplicaProperties", (node?: SsmsNode) => {
+    // Primary-only guard: AG config changes (seeding, options, add/remove
+    // replica) must run on the primary. Returns false if the user cancels.
+    vscode.commands.registerCommand("ssms.newAg", () =>
+      withTreeConnection(provider, async (run) => {
+        const srvRes = await run(LOCAL_SERVER_NAME);
+        const local = cellAt(srvRes, 0, "local_server") || "SERVER1";
+        const major = parseInt(cellAt(await run(SERVER_MAJOR_VERSION), 0, "major"), 10) || 0;
+        const dbRes = await run(USER_DATABASES);
+        const choices = dbRes.rows.map((_, i) => {
+          const name = cellAt(dbRes, i, "name");
+          return { value: name, label: name };
+        });
+        // CLUSTER_TYPE NONE/EXTERNAL are SQL 2017+; older servers get WSFC only.
+        const clusterOptions =
+          major >= FEATURE_MIN_MAJOR.clusterless ? ["WSFC", "NONE", "EXTERNAL"] : ["WSFC"];
+        const fields: FieldDef[] = [
+          { key: "name", label: "Availability Group Name", type: "text" },
+          { key: "cluster_type", label: "Cluster Type", type: "select", options: clusterOptions },
+          { key: "backup_pref", label: "Automated Backup Preference", type: "select", options: ["SECONDARY", "SECONDARY_ONLY", "PRIMARY", "NONE"] },
+          { key: "db_failover", label: "Database Level Health Detection", type: "checkbox" },
+        ];
+        // DTC_SUPPORT = PER_DB is SQL 2016+ and set only at create time.
+        if (major >= FEATURE_MIN_MAJOR.dtc) {
+          fields.push({ key: "dtc", label: "Per-Database DTC Support (DTC_SUPPORT = PER_DB)", type: "checkbox" });
+        }
+        fields.push(
+          { key: "databases", label: "Databases", type: "checklist", choices },
+          { key: "replicas", label: "Replicas — one per line: server, endpointURL, SYNC|ASYNC, AUTO|MANUAL (failover), AUTO|MANUAL (seeding). First line is the primary.", type: "textarea" },
+          { key: "verify", label: "Verify secondary SQL versions before applying", type: "checkbox" }
+        );
+        openEntityForm(run, {
+          title: "New Availability Group",
+          fields,
+          initial: {
+            name: "",
+            cluster_type: "WSFC",
+            backup_pref: "SECONDARY",
+            db_failover: true,
+            dtc: false,
+            databases: [],
+            replicas: `${local}, TCP://${local}:5022, SYNC, AUTO, AUTO`,
+            verify: true,
+          },
+          preApply: async (v) => {
+            if (!v.verify) {
+              return undefined;
+            }
+            const secondaries = parseReplicaLines(String(v.replicas))
+              .slice(1)
+              .map((r) => r.server)
+              .filter(Boolean);
+            return secondaries.length ? preCheckReplicaVersions(secondaries, major) : undefined;
+          },
+          makeBatch: (v) => {
+            const replicas = parseReplicaLines(String(v.replicas));
+            if (!String(v.name).trim()) {
+              return "-- Enter an availability group name.";
+            }
+            if (replicas.length === 0) {
+              return "-- Add at least one replica line (the first is the primary).";
+            }
+            return buildCreateAg({
+              name: String(v.name).trim(),
+              clusterType: v.cluster_type as ClusterType,
+              databases: Array.isArray(v.databases) ? v.databases : [],
+              automatedBackupPreference: String(v.backup_pref),
+              dbFailover: !!v.db_failover,
+              dtcSupport: major >= FEATURE_MIN_MAJOR.dtc && !!v.dtc,
+              replicas,
+              primaryMajor: major,
+            });
+          },
+          onApplied: () => {
+            provider.refresh();
+            vscode.window.showInformationMessage(
+              "Availability group created on this (primary) instance. Run the secondary JOIN commands (see Script) on each secondary replica."
+            );
+          },
+        });
+      })
+    ),
+    vscode.commands.registerCommand("ssms.agProperties", (node?: SsmsNode) => {
       const ag = node?.agName;
-      const replica = node?.objectName;
-      if (!ag || !replica) {
+      if (!ag) {
         return;
       }
       return withTreeConnection(provider, async (run) => {
-        // SEEDING_MODE can only be changed on the primary replica. If the tree is
-        // following a secondary, warn before opening so the user understands why
-        // Apply may fail (Script still works for running on the primary).
-        const cell1 = (r: SimpleExecuteResult, col: string): string => {
-          const idx = r.columnInfo.findIndex((c) => c.columnName === col);
-          const val = idx >= 0 ? r.rows[0]?.[idx] : undefined;
-          return val && !val.isNull ? val.displayValue : "";
-        };
         const roleRes = await run(agPrimaryReplica(ag));
-        const primary = cell1(roleRes, "primary_replica");
-        const local = cell1(roleRes, "local_server");
+        const primary = cellAt(roleRes, 0, "primary_replica");
+        const local = cellAt(roleRes, 0, "local_server");
         if (primary && local && primary.toLowerCase() !== local.toLowerCase()) {
           const choice = await vscode.window.showWarningMessage(
-            `Automatic Seeding can only be changed on the primary replica of "${ag}", which is "${primary}". This connection is "${local}", so applying here will fail — use Script and run it on the primary, or reconnect to the primary.`,
+            `Availability-group settings can only be changed on the primary replica of "${ag}", which is "${primary}". This connection is "${local}", so applying here will fail — use Script and run it on the primary, or reconnect to the primary.`,
             { modal: true },
             "Open Anyway"
           );
@@ -524,25 +693,241 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
         }
-        const res = await run(replicaSeeding(ag, replica));
-        const i = res.columnInfo.findIndex((c) => c.columnName === "seeding_mode");
-        const v = i >= 0 ? res.rows[0]?.[i] : undefined;
-        const current = v && !v.isNull ? v.displayValue : "MANUAL";
-        openEntityForm(run, {
-          title: `Availability Replica Properties — ${replica}`,
-          fields: [
-            {
-              key: "seeding_mode",
-              label: "Automatic Seeding",
-              type: "select",
-              options: ["AUTOMATIC", "MANUAL"],
-            },
-          ],
-          initial: { seeding_mode: current === "AUTOMATIC" ? "AUTOMATIC" : "MANUAL" },
-          makeBatch: (vals) =>
-            buildSeedingModeAlter(ag, replica, vals.seeding_mode as SeedingMode),
+        const rc = await run(replicaConfig(ag));
+        const replicas: ReplicaRow[] = rc.rows.map((_, i) => ({
+          server: cellAt(rc, i, "server"),
+          role: cellAt(rc, i, "role"),
+          availabilityMode: cellAt(rc, i, "availability_mode"),
+          failoverMode: cellAt(rc, i, "failover_mode"),
+          primaryConnections: cellAt(rc, i, "primary_connections"),
+          readableSecondary: cellAt(rc, i, "readable_secondary"),
+          seedingMode: cellAt(rc, i, "seeding_mode"),
+          sessionTimeout: cellAt(rc, i, "session_timeout"),
+        }));
+        const optRes = await run(agPropertiesQuery(ag));
+        const agBefore: AgLevel = {
+          backupPref: (cellAt(optRes, 0, "backup_pref") || "SECONDARY").toUpperCase(),
+          requiredSecondaries: cellAt(optRes, 0, "required_secondaries") || "0",
+          healthCheckTimeout: cellAt(optRes, 0, "health_check_timeout") || "30000",
+          dbFailover: cellAt(optRes, 0, "db_failover") === "1",
+        };
+        const major = parseInt(cellAt(await run(SERVER_MAJOR_VERSION), 0, "major"), 10) || 0;
+        // Keep a copy of the originals to diff against on apply.
+        const repBefore = replicas.map((r) => ({ ...r }));
+        openAvailabilityGroupProperties(run, {
+          agName: ag,
+          replicas,
+          ag: agBefore,
+          majorVersion: major,
+          makeBatch: (repAfter, agAfter) => {
+            const parts: string[] = [];
+            for (const after of repAfter) {
+              const before = repBefore.find((b) => b.server === after.server);
+              if (before) {
+                parts.push(buildModifyReplica(ag, before, after));
+              }
+            }
+            parts.push(buildAgLevelAlter(ag, agBefore, agAfter));
+            return parts.filter(Boolean).join("\n") || "-- No changes.";
+          },
           onApplied: () => provider.refresh(),
         });
+      });
+    }),
+    vscode.commands.registerCommand("ssms.deleteAg", async (node?: SsmsNode) => {
+      const ag = node?.agName;
+      if (!ag) {
+        return;
+      }
+      const choice = await vscode.window.showWarningMessage(
+        `Delete availability group "${ag}"? This removes the AG from the server. Databases are not dropped. This cannot be undone.`,
+        { modal: true },
+        "Delete"
+      );
+      if (choice !== "Delete") {
+        return;
+      }
+      await withTreeConnection(provider, async (run) => {
+        await run(buildDropAg(ag));
+        vscode.window.showInformationMessage(`Availability group "${ag}" deleted.`);
+        provider.refresh();
+      });
+    }),
+    vscode.commands.registerCommand("ssms.addReplica", (node?: SsmsNode) => {
+      const ag = node?.agName;
+      if (!ag) {
+        return;
+      }
+      return withTreeConnection(provider, async (run) => {
+        const major = parseInt(cellAt(await run(SERVER_MAJOR_VERSION), 0, "major"), 10) || 0;
+        const clusterOptions =
+          major >= FEATURE_MIN_MAJOR.clusterless ? ["WSFC", "NONE", "EXTERNAL"] : ["WSFC"];
+        const seedingOptions =
+          major >= FEATURE_MIN_MAJOR.seeding ? ["AUTOMATIC", "MANUAL"] : ["MANUAL"];
+        // Derive the primary's domain so a bare secondary name becomes an FQDN
+        // endpoint (short names usually don't resolve between AG nodes).
+        const epUrl = cellAt(await run(primaryEndpointUrl(ag)), 0, "endpoint_url");
+        const hostMatch = epUrl.match(/:\/\/([^:/]+)/);
+        const primaryHost = hostMatch ? hostMatch[1] : "";
+        const dotIdx = primaryHost.indexOf(".");
+        const domain = dotIdx >= 0 ? primaryHost.substring(dotIdx + 1) : "";
+        // Captured on apply so onApplied can offer to join the new secondary.
+        let pending: { spec: ReplicaSpec; clusterType: ClusterType } | undefined;
+        openEntityForm(run, {
+          title: `Add Replica — ${ag}`,
+          fields: [
+            { key: "server", label: "Server Name (secondary)", type: "text" },
+            { key: "endpoint", label: "Endpoint URL (e.g. TCP://host:5022)", type: "text", autoFrom: "server", autoTemplate: "TCP://{v}:5022", autoSuffix: domain },
+            { key: "availability", label: "Availability Mode", type: "select", options: ["SYNCHRONOUS_COMMIT", "ASYNCHRONOUS_COMMIT"] },
+            { key: "failover", label: "Failover Mode", type: "select", options: ["MANUAL", "AUTOMATIC"] },
+            { key: "seeding", label: "Seeding Mode", type: "select", options: seedingOptions },
+            { key: "cluster_type", label: "Cluster Type", type: "select", options: clusterOptions },
+            { key: "verify", label: "Verify replica SQL version before applying", type: "checkbox" },
+          ],
+          initial: {
+            server: "",
+            endpoint: "TCP://:5022",
+            availability: "SYNCHRONOUS_COMMIT",
+            failover: "MANUAL",
+            seeding: major >= FEATURE_MIN_MAJOR.seeding ? "AUTOMATIC" : "MANUAL",
+            cluster_type: "WSFC",
+            verify: true,
+          },
+          preApply: async (v) => {
+            if (!v.verify) {
+              return undefined;
+            }
+            const server = String(v.server).trim();
+            return server ? preCheckReplicaVersions([server], major) : undefined;
+          },
+          makeBatch: (v) => {
+            const server = String(v.server).trim();
+            if (!server) {
+              return "-- Enter the secondary server name.";
+            }
+            const clusterType = v.cluster_type as ClusterType;
+            const r: ReplicaSpec = {
+              server,
+              endpointUrl: String(v.endpoint).trim(),
+              availabilityMode: v.availability as AvailabilityMode,
+              failoverMode: v.failover as FailoverMode,
+              seedingMode: v.seeding as SeedingMode,
+            };
+            pending = { spec: r, clusterType };
+            return buildAddReplica(ag, clusterType, r, major);
+          },
+          onApplied: async () => {
+            provider.refresh();
+            if (!pending) {
+              return;
+            }
+            const { spec, clusterType } = pending;
+            // The ADD REPLICA ran on the primary; the secondary must now create
+            // its endpoint and JOIN — which can only run on the secondary.
+            const joinSql =
+              `-- Run this on "${spec.server}" to finish joining it to [${ag}].\n` +
+              `-- Connect this editor to "${spec.server}", then execute.\n` +
+              buildReplicaJoin(ag, clusterType, spec, major) +
+              "\n";
+            const openScript = async (): Promise<void> => {
+              const doc = await vscode.workspace.openTextDocument({
+                language: "sql",
+                content: joinSql,
+              });
+              await vscode.window.showTextDocument(doc, { preview: false });
+            };
+            const choice = await vscode.window.showInformationMessage(
+              `Replica "${spec.server}" was added on the primary, but it still needs to JOIN the AG from "${spec.server}" itself. Join it now?`,
+              { modal: true },
+              "Open JOIN Script",
+              "Connect & Join"
+            );
+            if (choice !== "Connect & Join") {
+              // Default (incl. dismiss) → give them the ready-to-run script.
+              await openScript();
+              vscode.window.showInformationMessage(
+                `JOIN script opened. Connect it to "${spec.server}" and run it to finish joining.`
+              );
+              return;
+            }
+            try {
+              const api = await MssqlApi.acquire();
+              const conn = await api.promptForConnectionUri();
+              if (conn === "unsupported" || conn === "cancelled") {
+                await openScript();
+                vscode.window.showInformationMessage(
+                  `JOIN script opened. Connect it to "${spec.server}" and run it to finish joining.`
+                );
+                return;
+              }
+              await api.execute(conn.uri, buildReplicaJoin(ag, clusterType, spec, major));
+              vscode.window.showInformationMessage(
+                `Replica "${spec.server}" joined "${ag}".`
+              );
+              provider.refresh();
+            } catch (err) {
+              await openScript();
+              vscode.window.showErrorMessage(
+                `Couldn't join "${spec.server}" automatically (${err instanceof Error ? err.message : String(err)}). The JOIN script is open — connect it to "${spec.server}" and run it.`
+              );
+            }
+          },
+        });
+      });
+    }),
+    vscode.commands.registerCommand("ssms.removeReplica", (node?: SsmsNode) => {
+      const ag = node?.agName;
+      const replica = node?.objectName;
+      if (!ag || !replica) {
+        return;
+      }
+      return withTreeConnection(provider, async (run) => {
+        const roleRes = await run(agPrimaryReplica(ag));
+        const primary = cellAt(roleRes, 0, "primary_replica");
+        const local = cellAt(roleRes, 0, "local_server");
+        if (primary && local && primary.toLowerCase() !== local.toLowerCase()) {
+          const choice = await vscode.window.showWarningMessage(
+            `Replicas can only be removed on the primary replica of "${ag}", which is "${primary}". This connection is "${local}". Reconnect to the primary, then try again.`,
+            { modal: true },
+            "Open Anyway"
+          );
+          if (choice !== "Open Anyway") {
+            return;
+          }
+        }
+        // Capture the AG's databases before removal so we can offer to drop them.
+        const dbRes = await run(agDatabases(ag));
+        const dbNames = dbRes.rows
+          .map((_, i) => cellAt(dbRes, i, "database_name"))
+          .filter(Boolean);
+        const confirm = await vscode.window.showWarningMessage(
+          `Remove replica "${replica}" from availability group "${ag}"? This cannot be undone.`,
+          { modal: true },
+          "Remove"
+        );
+        if (confirm !== "Remove") {
+          return;
+        }
+        await run(buildRemoveReplica(ag, replica));
+        vscode.window.showInformationMessage(`Replica "${replica}" removed from "${ag}".`);
+        provider.refresh();
+        if (dbNames.length > 0) {
+          const drop = await vscode.window.showWarningMessage(
+            `Also remove the ${dbNames.length} database(s) that were in "${ag}" from the removed server "${replica}"?`,
+            {
+              modal: true,
+              detail: `This opens a DROP DATABASE script to run on ${replica}:\n${dbNames.join(", ")}`,
+            },
+            "Create Drop Script"
+          );
+          if (drop === "Create Drop Script") {
+            const doc = await vscode.workspace.openTextDocument({
+              language: "sql",
+              content: buildDropDatabases(ag, replica, dbNames),
+            });
+            await vscode.window.showTextDocument(doc, { preview: false });
+          }
+        }
       });
     }),
     vscode.commands.registerCommand("ssms.resourceGovernorProperties", () =>

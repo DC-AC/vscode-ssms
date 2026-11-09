@@ -2,7 +2,7 @@
   "name": "vscode-ssms",
   "displayName": "SSMS Tools for SQL Server",
   "description": "SSMS-style server management (Management, Resource Governor, SQL Server Agent) on top of the official SQL Server (mssql) extension.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publisher": "dcac",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -99,8 +99,28 @@
         "category": "SSMS Tools"
       },
       {
-        "command": "ssms.agReplicaProperties",
+        "command": "ssms.newAg",
+        "title": "New Availability Group",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.agProperties",
         "title": "Properties",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.deleteAg",
+        "title": "Delete",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.addReplica",
+        "title": "Add Replica",
+        "category": "SSMS Tools"
+      },
+      {
+        "command": "ssms.removeReplica",
+        "title": "Remove from Availability Group",
         "category": "SSMS Tools"
       },
       {
@@ -173,9 +193,29 @@
           "group": "9_ssms_props@1"
         },
         {
-          "command": "ssms.agReplicaProperties",
+          "command": "ssms.newAg",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAgGroupsRoot",
+          "group": "1_ssms_new@1"
+        },
+        {
+          "command": "ssms.agProperties",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAg",
+          "group": "1_ssms_props@1"
+        },
+        {
+          "command": "ssms.deleteAg",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAg",
+          "group": "9_ssms_danger@9"
+        },
+        {
+          "command": "ssms.addReplica",
+          "when": "view == ssms.objectExplorer && viewItem == ssmsAgReplicasRoot",
+          "group": "1_ssms_new@1"
+        },
+        {
+          "command": "ssms.removeReplica",
           "when": "view == ssms.objectExplorer && viewItem == ssmsAgReplica",
-          "group": "9_ssms_props@1"
+          "group": "9_ssms_danger@9"
         },
         {
           "command": "ssms.newJob",
@@ -293,7 +333,11 @@
         { "command": "ssms.openQueryStoreOverall", "when": "false" },
         { "command": "ssms.queryStoreProperties", "when": "false" },
         { "command": "ssms.databaseProperties", "when": "false" },
-        { "command": "ssms.agReplicaProperties", "when": "false" }
+        { "command": "ssms.newAg", "when": "false" },
+        { "command": "ssms.agProperties", "when": "false" },
+        { "command": "ssms.deleteAg", "when": "false" },
+        { "command": "ssms.addReplica", "when": "false" },
+        { "command": "ssms.removeReplica", "when": "false" }
       ]
     }
   },

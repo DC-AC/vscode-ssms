@@ -112,6 +112,56 @@ export class MssqlApi {
   }
 
   /**
+   * Prompt the user (via mssql's own connection dialog) to connect to a server,
+   * then return that server's SQL Server major version. Returns "unsupported"
+   * when the installed mssql build doesn't expose `promptForConnection`, or
+   * "cancelled" when the user backs out of the dialog. Used to pre-check that a
+   * replica is the same or a higher major version than the primary.
+   */
+  async promptForServerMajorVersion(): Promise<
+    { server: string; major: number } | "unsupported" | "cancelled"
+  > {
+    const conn = await this.promptForConnectionUri();
+    if (conn === "unsupported" || conn === "cancelled") {
+      return conn;
+    }
+    const res = await this.execute(
+      conn.uri,
+      "SELECT CAST(SERVERPROPERTY('ProductMajorVersion') AS int) AS major;"
+    );
+    const idx = res.columnInfo.findIndex((c) => c.columnName === "major");
+    const v = idx >= 0 ? res.rows[0]?.[idx] : undefined;
+    const major = v && !v.isNull ? parseInt(v.displayValue, 10) : 0;
+    return { server: conn.server, major };
+  }
+
+  /**
+   * Prompt the user (via mssql's connection dialog) to connect to a server and
+   * return its connection URI plus server name, so the caller can run SQL on it
+   * (e.g. to join a newly added secondary). Returns "unsupported" when the
+   * installed mssql build lacks `promptForConnection`, or "cancelled" when the
+   * user backs out.
+   */
+  async promptForConnectionUri(): Promise<
+    { uri: string; server: string } | "unsupported" | "cancelled"
+  > {
+    const prompt = (this.ext as Partial<IExtension>).promptForConnection;
+    if (typeof prompt !== "function") {
+      return "unsupported";
+    }
+    const info = await prompt.call(this.ext, true);
+    if (!info) {
+      return "cancelled";
+    }
+    const { uri } = await this.connectWithInfo(info);
+    if (!uri) {
+      return "cancelled";
+    }
+    const server = (info as { server?: string }).server || "the selected server";
+    return { uri, server };
+  }
+
+  /**
    * Connection id of the connection backing the active SQL editor.
    * Throws a ConnectionSharingError for the expected states (no active editor,
    * permission required/denied); callers classify via {@link sharingErrorCode}.
