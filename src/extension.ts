@@ -570,8 +570,8 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
           }
           const api = await MssqlApi.acquire();
-          const uri = await api.connectWithInfo(info);
-          await provider.pinConnection(uri);
+          const { uri, connectionId } = await api.connectWithInfo(info);
+          await provider.pinConnection(uri, connectionId);
           await vscode.commands.executeCommand("ssms.objectExplorer.focus");
         } catch (err) {
           vscode.window.showErrorMessage(

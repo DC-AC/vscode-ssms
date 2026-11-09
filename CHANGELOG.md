@@ -2,6 +2,16 @@
 
 All notable changes to **SSMS Tools for SQL Server** are documented here.
 
+## [0.3.1] - 2026-11-08
+
+### Fixed
+- **Open in SSMS Tools** (server right-click) failed with `this.ext.connect is not a function`
+  on current SQL Server (mssql) builds, whose Connection Sharing API object does not expose the
+  top-level `connect`. The command now connects through the Connection Sharing service using the
+  server node's saved-connection id (falling back to the legacy top-level `connect` when present),
+  and the resolved connection id is threaded through the pinned connection so per-database features
+  work too.
+
 ## [0.3.0] - 2026-11-08
 
 ### Added

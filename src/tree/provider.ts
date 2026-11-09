@@ -27,6 +27,9 @@ export class ServerManagementProvider
   /** When set, the tree is pinned to this connection URI instead of following
    * the active editor (used by "Open in SSMS Tools" from a server node). */
   private pinnedUri: string | undefined;
+  /** The saved-connection id backing a pinned connection, when known, so
+   * per-database features (e.g. Query Store) can open sibling databases. */
+  private pinnedConnectionId: string | undefined;
 
   /** Wire up the view once it has been created with this provider. */
   setView(view: vscode.TreeView<SsmsNode>): void {
@@ -45,8 +48,9 @@ export class ServerManagementProvider
    * overriding active-editor follow until the user pins another or refreshes
    * onto a connected editor.
    */
-  async pinConnection(uri: string): Promise<void> {
+  async pinConnection(uri: string, connectionId?: string): Promise<void> {
     this.pinnedUri = uri;
+    this.pinnedConnectionId = connectionId;
     this.context = undefined;
     this.statusMessage = undefined;
     await this.ensureContext();
@@ -71,6 +75,7 @@ export class ServerManagementProvider
         return;
       }
       this.pinnedUri = undefined;
+      this.pinnedConnectionId = undefined;
       this.context = await probeServerContext(this.api, uri, connectionId);
       this.statusMessage = undefined;
       this._onDidChangeTreeData.fire(undefined);
@@ -134,7 +139,7 @@ export class ServerManagementProvider
         this.context = await probeServerContext(
           this.api,
           this.pinnedUri,
-          this.pinnedUri
+          this.pinnedConnectionId ?? this.pinnedUri
         );
         return this.context;
       }

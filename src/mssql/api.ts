@@ -71,12 +71,44 @@ export class MssqlApi {
   }
 
   /**
-   * Open (or reuse) a connection from a connection profile — e.g. the
-   * `connectionProfile` of an Object Explorer server node — and return its URI.
-   * We don't pass saveConnection, so no new profile is persisted.
+   * Open (or reuse) a connection from an Object Explorer server node's
+   * `connectionProfile` and return its URI plus the backing connection id.
+   *
+   * Current mssql builds expose the Connection Sharing API object, which does
+   * NOT carry the top-level `IExtension.connect` — calling it throws
+   * "connect is not a function". So we connect through the sharing service
+   * using the saved-connection id on the profile. Builds that still expose a
+   * top-level `connect(connectionInfo)` are used as a fallback (and for ad-hoc
+   * connections that aren't in the saved-connection store).
    */
-  async connectWithInfo(info: IConnectionInfo): Promise<string> {
-    return this.ext.connect(info);
+  async connectWithInfo(
+    info: IConnectionInfo
+  ): Promise<{ uri: string; connectionId?: string }> {
+    const connectionId = (info as { id?: string }).id;
+    let sharingErr: unknown;
+    if (connectionId) {
+      try {
+        const uri = await this.sharing.connect(OUR_EXTENSION_ID, connectionId);
+        if (uri) {
+          return { uri, connectionId };
+        }
+      } catch (e) {
+        sharingErr = e;
+      }
+    }
+    const legacyConnect = (this.ext as Partial<IExtension>).connect;
+    if (typeof legacyConnect === "function") {
+      const uri = await legacyConnect.call(this.ext, info);
+      return { uri };
+    }
+    if (sharingErr) {
+      throw sharingErr;
+    }
+    throw new Error(
+      "Couldn't open this server directly. In the SQL Server (mssql) extension, " +
+        "save this connection (or open a query on it), then use SSMS Tools — the " +
+        "view follows the connected editor."
+    );
   }
 
   /**
